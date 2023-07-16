@@ -455,23 +455,23 @@ class RTCRtpReceiver:
         self.__log_debug("< %s", packet)
 
         # feed bitrate estimator
-        if self.__remote_bitrate_estimator is not None:
-            if packet.extensions.abs_send_time is not None:
-                remb = self.__remote_bitrate_estimator.add(
-                    abs_send_time=packet.extensions.abs_send_time,
-                    arrival_time_ms=arrival_time_ms,
-                    payload_size=len(packet.payload) + packet.padding_size,
-                    ssrc=packet.ssrc,
-                )
-                if self.__rtcp_ssrc is not None and remb is not None:
-                    # send Receiver Estimated Maximum Bitrate feedback
-                    rtcp_packet = RtcpPsfbPacket(
-                        fmt=RTCP_PSFB_APP,
-                        ssrc=self.__rtcp_ssrc,
-                        media_ssrc=0,
-                        fci=pack_remb_fci(*remb),
-                    )
-                    await self._send_rtcp(rtcp_packet)
+        # if self.__remote_bitrate_estimator is not None:
+        #     if packet.extensions.abs_send_time is not None:
+        #         remb = self.__remote_bitrate_estimator.add(
+        #             abs_send_time=packet.extensions.abs_send_time,
+        #             arrival_time_ms=arrival_time_ms,
+        #             payload_size=len(packet.payload) + packet.padding_size,
+        #             ssrc=packet.ssrc,
+        #         )
+        #         if self.__rtcp_ssrc is not None and remb is not None:
+        #             # send Receiver Estimated Maximum Bitrate feedback
+        #             rtcp_packet = RtcpPsfbPacket(
+        #                 fmt=RTCP_PSFB_APP,
+        #                 ssrc=self.__rtcp_ssrc,
+        #                 media_ssrc=0,
+        #                 fci=pack_remb_fci(*remb),
+        #             )
+        #             await self._send_rtcp(rtcp_packet)
 
         # keep track of sources
         self.__active_ssrc[packet.ssrc] = clock.current_datetime()

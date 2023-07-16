@@ -228,12 +228,12 @@ class RtpRouter:
             add_recipient(self.senders.get(packet.media_ssrc))
 
             # for REMB packets, media_ssrc is always 0, we need to look into the FCI
-            if isinstance(packet, RtcpPsfbPacket) and packet.fmt == rtp.RTCP_PSFB_APP:
-                try:
-                    for ssrc in rtp.unpack_remb_fci(packet.fci)[1]:
-                        add_recipient(self.senders.get(ssrc))
-                except ValueError:
-                    pass
+            # if isinstance(packet, RtcpPsfbPacket) and packet.fmt == rtp.RTCP_PSFB_APP:
+            #     try:
+            #         for ssrc in rtp.unpack_remb_fci(packet.fci)[1]:
+            #             add_recipient(self.senders.get(ssrc))
+            #     except ValueError:
+            #         pass
 
         return recipients
 
