@@ -275,7 +275,11 @@ class RTCRtpReceiver:
         else:
             self.__jitter_buffer = JitterBuffer(capacity=128, is_video=True)
             self.__nack_generator = NackGenerator()
-            self.__remote_bitrate_estimator = RemoteBitrateEstimator()
+            # self.__remote_bitrate_estimator = RemoteBitrateEstimator()
+            # We want to disable goog-remb, because it seems not to be implemented everywhere
+            # and where it is implemented, it seems to estimate the bitrate far too low, making
+            # the display completely unusable despite there being plenty of network bandwidth available.
+            self.__remote_bitrate_estimator = None
         self._track: Optional[RemoteStreamTrack] = None
         self.__rtcp_exited = asyncio.Event()
         self.__rtcp_started = asyncio.Event()
