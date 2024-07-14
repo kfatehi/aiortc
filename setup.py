@@ -1,14 +1,21 @@
-import os
-
 import setuptools
+from wheel.bdist_wheel import bdist_wheel
 
-cffi_modules = [
-    "src/_cffi_src/build_opus.py:ffibuilder",
-    "src/_cffi_src/build_vpx.py:ffibuilder",
-]
 
-# Do not build cffi modules on readthedocs as we lack the codec development files.
-if os.environ.get("READTHEDOCS") == "True":
-    cffi_modules = []
+class bdist_wheel_abi3(bdist_wheel):
+    def get_tag(self):
+        python, abi, plat = super().get_tag()
 
-setuptools.setup(cffi_modules=cffi_modules)
+        if python.startswith("cp"):
+            return "cp38", "abi3", plat
+
+        return python, abi, plat
+
+
+setuptools.setup(
+    cffi_modules=[
+        "src/_cffi_src/build_opus.py:ffibuilder",
+        "src/_cffi_src/build_vpx.py:ffibuilder",
+    ],
+    cmdclass={"bdist_wheel": bdist_wheel_abi3},
+)

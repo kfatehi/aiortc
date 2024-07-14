@@ -78,6 +78,7 @@ class RTCRtpSender:
         self._rtx_ssrc = random32()
         # FIXME: how should this be initialised?
         self._stream_id = str(uuid.uuid4())
+        self._enabled = True
         self.__encoder: Optional[Encoder] = None
         self.__force_keyframe = False
         self.__loop = asyncio.get_event_loop()
@@ -103,7 +104,7 @@ class RTCRtpSender:
         self.__rtp_timestamp = 0
         self.__octet_count = 0
         self.__packet_count = 0
-        self.__rtt = None
+        self.__rtt: Optional[float] = None
 
         # logging
         self.__log_debug: Callable[..., None] = lambda *args: None
@@ -205,7 +206,7 @@ class RTCRtpSender:
             self.__rtcp_task = asyncio.ensure_future(self._run_rtcp())
             self.__started = True
 
-    async def stop(self):
+    async def stop(self) -> None:
         """
         Irreversibly stop the sender.
         """
@@ -218,7 +219,7 @@ class RTCRtpSender:
             self.__rtcp_task.cancel()
             await asyncio.gather(self.__rtp_exited.wait(), self.__rtcp_exited.wait())
 
-    async def _handle_rtcp_packet(self, packet):
+    async def _handle_rtcp_packet(self, packet) -> None:
         if isinstance(packet, (RtcpRrPacket, RtcpSrPacket)):
             for report in filter(lambda x: x.ssrc == self._ssrc, packet.reports):
                 # estimate round-trip time
@@ -265,16 +266,25 @@ class RTCRtpSender:
         #     except ValueError:
         #         pass
 
-    async def _next_encoded_frame(self, codec: RTCRtpCodecParameters):
-        # get [Frame|Packet]
+    async def _next_encoded_frame(
+        self, codec: RTCRtpCodecParameters
+    ) -> Optional[RTCEncodedFrame]:
+        # Get [Frame|Packet].
         data = await self.__track.recv()
+
+        # If the sender is disabled, drop the frame instead of encoding it.
+        # We still want to read from the track in order to avoid frames
+        # accumulating in memory.
+        if not self._enabled:
+            return None
+
         audio_level = None
 
         if self.__encoder is None:
             self.__encoder = get_encoder(codec)
 
         if isinstance(data, Frame):
-            # encode frame
+            # Encode the frame.
             if isinstance(data, AudioFrame):
                 audio_level = rtp.compute_audio_level_dbov(data)
 
@@ -284,7 +294,13 @@ class RTCRtpSender:
                 None, self.__encoder.encode, data, force_keyframe
             )
         else:
+            # Pack the pre-encoded data.
             payloads, timestamp = self.__encoder.pack(data)
+
+        # If the encoder did not return any payloads, return `None`.
+        # This may be due to a delay caused by resampling.
+        if not payloads:
+            return None
 
         return RTCEncodedFrame(payloads, timestamp, audio_level)
 
@@ -325,7 +341,12 @@ class RTCRtpSender:
                     await asyncio.sleep(0.02)
                     continue
 
+                # Fetch the next encoded frame. This can be `None` if the sender
+                # is disabled, in which case we just continue the loop.
                 enc_frame = await self._next_encoded_frame(codec)
+                if enc_frame is None:
+                    continue
+
                 timestamp = uint32_add(timestamp_origin, enc_frame.timestamp)
 
                 for i, payload in enumerate(enc_frame.payloads):
@@ -348,9 +369,9 @@ class RTCRtpSender:
 
                     # send packet
                     self.__log_debug("> %s", packet)
-                    self.__rtp_history[
-                        packet.sequence_number % RTP_HISTORY_SIZE
-                    ] = packet
+                    self.__rtp_history[packet.sequence_number % RTP_HISTORY_SIZE] = (
+                        packet
+                    )
                     packet_bytes = packet.serialize(self.__rtp_header_extensions_map)
                     await self.transport._send_rtp(packet_bytes)
 
@@ -370,6 +391,10 @@ class RTCRtpSender:
         if self.__track:
             self.__track.stop()
             self.__track = None
+
+        # release encoder
+        if self.__encoder:
+            del self.__encoder
 
         self.__log_debug("- RTP finished")
         self.__rtp_exited.set()

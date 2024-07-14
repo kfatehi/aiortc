@@ -311,10 +311,11 @@ class RTCPeerConnection(AsyncIOEventEmitter):
         self.__stream_id = str(uuid.uuid4())
         self.__transceivers: List[RTCRtpTransceiver] = []
 
+        self.__closeTask: Optional[asyncio.Task] = None
         self.__connectionState = "new"
         self.__iceConnectionState = "new"
         self.__iceGatheringState = "new"
-        self.__isClosed = False
+        self.__isClosed: Optional[asyncio.Future[bool]] = None
         self.__signalingState = "stable"
 
         self.__currentLocalDescription: Optional[sdp.SessionDescription] = None
@@ -474,13 +475,14 @@ class RTCPeerConnection(AsyncIOEventEmitter):
             direction=direction, kind=kind, sender_track=track
         )
 
-    async def close(self):
+    async def close(self) -> None:
         """
         Terminate the ICE agent, ending ICE processing and streams.
         """
         if self.__isClosed:
+            await self.__isClosed
             return
-        self.__isClosed = True
+        self.__isClosed = asyncio.Future()
         self.__setSignalingState("closed")
 
         # stop senders / receivers
@@ -505,6 +507,8 @@ class RTCPeerConnection(AsyncIOEventEmitter):
         # no more events will be emitted, so remove all event listeners
         # to facilitate garbage collection.
         self.remove_all_listeners()
+
+        self.__isClosed.set_result(True)
 
     async def createAnswer(self):
         """
@@ -785,7 +789,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
         # configure direction
         for t in self.__transceivers:
             if description.type in ["answer", "pranswer"]:
-                t._currentDirection = and_direction(t.direction, t._offerDirection)
+                t._setCurrentDirection(and_direction(t.direction, t._offerDirection))
 
         # gather candidates
         await self.__gather()
@@ -867,7 +871,7 @@ class RTCPeerConnection(AsyncIOEventEmitter):
                 # configure direction
                 direction = reverse_direction(media.direction)
                 if description.type in ["answer", "pranswer"]:
-                    transceiver._currentDirection = direction
+                    transceiver._setCurrentDirection(direction)
                 else:
                     transceiver._offerDirection = direction
 
@@ -924,6 +928,8 @@ class RTCPeerConnection(AsyncIOEventEmitter):
                     iceTransport._role_set = True
 
                 # set DTLS role
+                if description.type == "offer" and media.dtls.role == "client":
+                    dtlsTransport._set_role(role="server")
                 if description.type == "answer":
                     dtlsTransport._set_role(
                         role="server" if media.dtls.role == "client" else "client"
@@ -1177,6 +1183,14 @@ class RTCPeerConnection(AsyncIOEventEmitter):
             self.__connectionState = state
             self.emit("connectionstatechange")
 
+        # if all DTLS connections are closed, initiate a shutdown
+        if (
+            not self.__isClosed
+            and self.__closeTask is None
+            and dtlsStates == set(["closed"])
+        ):
+            self.__closeTask = asyncio.ensure_future(self.close())
+
     def __updateIceConnectionState(self) -> None:
         # compute new state
         # NOTE: we do not have "connected" or "disconnected" states
@@ -1261,8 +1275,6 @@ class RTCPeerConnection(AsyncIOEventEmitter):
                 raise ValueError("ICE username fragment or password is missing")
 
             # check DTLS role is allowed
-            if description.type == "offer" and media.dtls.role != "auto":
-                raise ValueError("DTLS setup attribute must be 'actpass' for an offer")
             if description.type in ["answer", "pranswer"] and media.dtls.role not in [
                 "client",
                 "server",
